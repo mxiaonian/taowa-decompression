@@ -80,49 +80,6 @@ def extract_with_7zip(archive_path, extract_path, password=None):
         return False
 
 
-# def extract_all(input_path, output_path, password=None, log_text_widget=None):
-#     if not os.path.exists(output_path):  # 检查输出路径是否存在，如果不存在，则创建该路径
-#         os.makedirs(output_path)
-#
-#     extracted_files = set()  # 用于存储已解压文件的集合
-#     dirs_to_process = queue.Queue()  # 创建一个队列，用于存储待处理的目录
-#     for root, dirs, files in os.walk(input_path):  # 遍历输入目录中的所有文件和子目录
-#         for file in files:
-#             file_path = os.path.join(root, file)  # 获取当前文件的完整路径
-#             if is_compressed_or_no_extension(file_path):
-#                 dirs_to_process.put(file_path)  # 将输入目录中的压缩包的完整路径加入队列
-#
-#     while not dirs_to_process.empty():  # 循环遍历队列，直到为空
-#         do_file = dirs_to_process.get()  # 从队列中取出一个文件路径
-#         if do_file not in extracted_files:  # 检查文件是否已经被解压过
-#             if is_compressed_or_no_extension(do_file):  # 检查文件扩展名是否在压缩文件扩展名列表中，或文件名无后缀
-#                 try:
-#                     result = extract_with_7zip(do_file, output_path, password, log_text_widget)  # 调用解压缩函数
-#                     if isinstance(result, list):  # 如果解压成功并返回了文件列表
-#                         log_text_widget.insert(tk.END, f"已解压文件: {result}\n")  # 在日志中记录解压的文件
-#                         extracted_files.add(do_file)  # 将解压过的文件添加到集合中
-#                         # 遍历第一次解压路径下的所有压缩包
-#                         for root, dirs, files in os.walk(output_path):  # 遍历解压路径下的所有文件
-#                             for file in files:
-#                                 output_file_path = os.path.join(root, file)
-#                                 if is_compressed_or_no_extension(output_file_path):
-#                                     dirs_to_process.put(output_file_path)
-#                 except UnicodeDecodeError as e:
-#                     messagebox.showwarning("编码警告", f"文件名编码错误: {do_file}\n{e}")
-#                     continue
-#                 except Exception as e:
-#                     messagebox.showwarning("警告", f"解压缩时出错: {e}")
-#                     continue
-#             else:
-#                 log_text_widget.insert(tk.END, f"非压缩文件或无后缀名文件，跳过文件: {do_file}\n")
-#         else:
-#             log_text_widget.insert(tk.END, f"文件已解压过，跳过文件: {do_file}\n")
-#     user_choice = messagebox.askquestion("提示", "解压完成，是否删除压缩文件？")
-#     if user_choice == 'yes':
-#         remove_compress(extracted_files)
-#     else:
-#         pass
-
 def remove_compress(extracted_files, log_text_widget=None):
     for file_path in extracted_files:
         try:
@@ -225,6 +182,7 @@ def select_input_directory():
 def select_output_directory():
     path = filedialog.askdirectory()
     output_dir_var.set(path)
+
 
 def select_clear_directory():
     path = filedialog.askdirectory()
