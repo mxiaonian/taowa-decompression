@@ -55,44 +55,33 @@ def build_command(archive_path, extract_path, password=None):
 def extract_with_7zip(archive_path, extract_path, password=None):
     command = build_command(archive_path, extract_path, password)
     try:
-        # 使用 utf-8 进行解码，并设置回退机制
+        # 指定输出的编码为 utf-8
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            encoding='utf-8',  # 首选 utf-8 编码
+            errors='ignore',  # 忽略编码报错
             env=os.environ,
         )
         stdout, stderr = process.communicate()
-
         if process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
-
         # 解压成功后，获取解压出的所有文件路径
         extracted_files = []
         for root, _, files in os.walk(extract_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 extracted_files.append(file_path)
-
         return extracted_files
-
     except subprocess.CalledProcessError as e:
-        # 确保 stderr 不为 None 后再进行 encode 处理
-        stderr_output = e.stderr if e.stderr else ""
-        # 使用回退编码处理错误消息，避免编码错误
-        log_message(f"解压失败: {stderr_output.encode('latin-1', 'ignore').decode('utf-8', 'ignore')}\n")
+        # 确保日志输出时也使用正确编码
+        log_message(f"解压失败: {e.stderr.encode('utf-8', 'ignore').decode('utf-8')}\n")
         return False
-
-    except UnicodeDecodeError as e:
-        # 增加对不同编码格式的兼容性处理
-        log_message(f"Unicode 解码错误: {str(e)}\n")
-        return False
-
     except Exception as e:
         log_message(f"发生异常: {str(e)}\n")
         return False
+
 
 def remove_compress(extracted_files, log_text_widget=None):
     for file_path in extracted_files:
@@ -121,6 +110,7 @@ def extract_all(input_path, output_path, password=None):
             for file in files:
                 file_path = os.path.join(root, file)
                 queued_files.put(file_path)
+
     def process_file():
         while True:
             try:
@@ -176,14 +166,12 @@ def extract_all(input_path, output_path, password=None):
         pass
 
 
-
-
 def is_compressed_file(file_path):
     if not os.path.isfile(file_path):
         return False
     _, file_extension = os.path.splitext(file_path)
     # 定义压缩文件扩展名
-    compression_extensions = ['.7z', '.zip', '.rar', '.tar', '.gz', '.bz2', '.xz', '', 'rarTH']
+    compression_extensions = ['.7z', '.zip', '.rar', '.tar', '.gz', '.bz2', '.xz', '', 'rarTH', '7zTH']
     return file_extension.lower() in compression_extensions
 
 
@@ -217,8 +205,6 @@ def start_extraction():
     update_log(log_text)
     extraction_thread = threading.Thread(target=extract_all, args=(input_path, output_path, password))
     extraction_thread.start()
-
-
 
 
 # 加载密码
