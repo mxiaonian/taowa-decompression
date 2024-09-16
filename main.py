@@ -55,40 +55,54 @@ def build_command(archive_path, extract_path, password=None):
 def extract_with_7zip(archive_path, extract_path, password=None):
     command = build_command(archive_path, extract_path, password)
     try:
+        # 使用 utf-8 进行解码，并设置回退机制
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',  # 首选 utf-8 编码
             env=os.environ,
         )
         stdout, stderr = process.communicate()
+
         if process.returncode != 0:
             raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+
         # 解压成功后，获取解压出的所有文件路径
         extracted_files = []
         for root, _, files in os.walk(extract_path):
             for file in files:
                 file_path = os.path.join(root, file)
                 extracted_files.append(file_path)
+
         return extracted_files
+
     except subprocess.CalledProcessError as e:
-        log_message(f"解压失败: {e.stderr}\n")
-        return False
-    except Exception as e:
-        log_message(f"发生异常: {e}\n")
+        # 确保 stderr 不为 None 后再进行 encode 处理
+        stderr_output = e.stderr if e.stderr else ""
+        # 使用回退编码处理错误消息，避免编码错误
+        log_message(f"解压失败: {stderr_output.encode('latin-1', 'ignore').decode('utf-8', 'ignore')}\n")
         return False
 
+    except UnicodeDecodeError as e:
+        # 增加对不同编码格式的兼容性处理
+        log_message(f"Unicode 解码错误: {str(e)}\n")
+        return False
+
+    except Exception as e:
+        log_message(f"发生异常: {str(e)}\n")
+        return False
 
 def remove_compress(extracted_files, log_text_widget=None):
     for file_path in extracted_files:
         try:
             os.remove(file_path)
             if log_text_widget:
-                log_text_widget.insert(tk.END, f"已删除文件: {file_path}\n")
+                log_message(f"已删除文件: {file_path}\n")
         except OSError as e:
             if log_text_widget:
-                log_text_widget.insert(tk.END, f"删除文件失败: {file_path} - {e}\n")
+                log_message(f"删除文件时发生异常: {e}\n")
 
 
 def extract_all(input_path, output_path, password=None):
@@ -107,7 +121,6 @@ def extract_all(input_path, output_path, password=None):
             for file in files:
                 file_path = os.path.join(root, file)
                 queued_files.put(file_path)
-
     def process_file():
         while True:
             try:
@@ -144,6 +157,7 @@ def extract_all(input_path, output_path, password=None):
     # 使用线程池控制并发
     max_workers = 5  # 根据需要调整线程数量
     threads = []
+    lock = threading.Lock()  # 添加锁
     for _ in range(max_workers):
         t = threading.Thread(target=process_file)
         t.start()
@@ -155,12 +169,13 @@ def extract_all(input_path, output_path, password=None):
     # 等待所有线程结束
     for t in threads:
         t.join()
-
     user_choice = messagebox.askquestion("提示", "解压完成，是否删除压缩文件？")
     if user_choice == 'yes':
         remove_compress(extracted_files)
     else:
         pass
+
+
 
 
 def is_compressed_file(file_path):
@@ -198,16 +213,12 @@ def start_extraction():
     if not input_path or not output_path:
         messagebox.showwarning("警告", "请填写所有必要的字段。")
         return
-
-    log_window = tk.Toplevel(root)
-    log_window.title("解压日志")
-    log_text = tk.Text(log_window, wrap='word')
-    log_text.pack(expand=True, fill='both')
-
     # 启动日志更新
     update_log(log_text)
     extraction_thread = threading.Thread(target=extract_all, args=(input_path, output_path, password))
     extraction_thread.start()
+
+
 
 
 # 加载密码
@@ -248,10 +259,10 @@ def delete_promotion_files():
                 file_path = os.path.join(root, file)
                 try:
                     os.remove(file_path)
-                    print(f"已删除文件: {file_path}")
+                    log_message(f"已删除文件: {file_path}\n")
                 except Exception as e:
-                    print(f"删除文件失败: {file_path}, 错误: {str(e)}")
-
+                    log_message(f"删除文件失败: {file_path}, 错误: {str(e)}\n")
+    log_message("删除操作已完成")
     messagebox.showinfo("完成", "删除操作已完成")
 
 
@@ -284,7 +295,7 @@ def on_drop_4(event):
 
 # 创建主窗口
 root = TkinterDnD.Tk()
-root.title("套娃解压工具 v0.2.0")
+root.title("套娃解压工具 v0.3.0")
 
 # 配置窗口的列和行，使其可以随着窗口大小的变化而变化
 root.columnconfigure(0, weight=1)
@@ -296,6 +307,7 @@ root.rowconfigure(2, weight=1)
 root.rowconfigure(3, weight=1)
 root.rowconfigure(4, weight=1)
 root.rowconfigure(5, weight=1)
+root.rowconfigure(6, weight=1)
 
 # 输入目录
 input_label = tk.Label(root, text="输入目录:")
@@ -364,5 +376,8 @@ delete_input.dnd_bind('<<Drop>>', on_drop_3)
 
 delete_button = tk.Button(root, text="删除", command=delete_promotion_files)
 delete_button.grid(row=5, column=2, padx=10, pady=10, sticky="we")
+
+log_text = tk.Text(root, wrap='word')
+log_text.grid(row=6, columnspan=3, padx=10, pady=10, sticky="we")
 
 root.mainloop()
