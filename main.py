@@ -4,15 +4,17 @@ import os
 import queue
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 from tkinter import messagebox
-from concurrent.futures import ThreadPoolExecutor
+from tkinter.ttk import Separator
+from tkinter.constants import HORIZONTAL
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tkinterdnd2 import *
 
 PASSWORD_FILE = 'passwords.json'
-lock = threading.Lock()
 # 全局日志队列
 log_queue = queue.Queue()
 
@@ -52,6 +54,110 @@ def build_command(archive_path, extract_path, password=None):
     return base_command
 
 
+def remove_compress(input_path):
+    update_log(log_text)
+    remove_queued_files = queue.Queue()
+    # 初始添加输入路径到队列
+    if os.path.isfile(input_path):
+        remove_queued_files.put(input_path)
+    else:
+        # 遍历输入路径，添加所有文件到队列
+        for root, _, files in os.walk(input_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                remove_queued_files.put(file_path)
+
+    # 循环处理队列中的每个文件
+    while not remove_queued_files.empty():
+        try:
+            remove_file = remove_queued_files.get(timeout=1)
+            if is_compressed_file(remove_file):
+                try:
+                    os.remove(remove_file)
+                    log_message(f"已删除文件: {remove_file}\n")
+                except OSError as e:
+                    log_message(f"删除文件时发生异常: {e}\n")
+        except queue.Empty:
+            break
+
+
+def start_extraction():
+    input_path = input_dir_var.get()
+    output_path = output_dir_var.get()
+    password = password_var.get()
+
+    if not input_path or not output_path:
+        messagebox.showwarning("警告", "请填写所有必要的字段。")
+        return
+    # 启动日志更新
+    update_log(log_text)
+    extraction_thread = threading.Thread(target=extract_all, args=(input_path, output_path, password))
+    extraction_thread.start()
+
+
+def extract_all(input_path, output_path, password=None):
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+
+    extracted_files = set()
+    queued_files = queue.Queue()
+
+    # 初始添加输入路径到队列
+    if os.path.isfile(input_path):
+        queued_files.put(input_path)
+    else:
+        # 遍历输入路径，添加所有文件到队列
+        for root, _, files in os.walk(input_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                queued_files.put(file_path)
+
+    def process_file():
+        while True:
+            try:
+                do_file = queued_files.get(timeout=1)
+            except queue.Empty:
+                break
+
+            with thread_lock:
+                if do_file in extracted_files:
+                    continue
+                extracted_files.add(do_file)
+
+            if is_compressed_file(do_file):
+                try:
+                    result = extract_with_7zip(do_file, output_path, password)
+                    if isinstance(result, list):
+                        log_message(f"已解压文件: {do_file}\n")
+                        # 将新解压出的文件添加到队列
+                        for file_path in result:
+                            if is_compressed_file(file_path):
+                                queued_files.put(file_path)
+                    else:
+                        log_message(f"解压失败: {do_file}\n")
+                except UnicodeDecodeError as e:
+                    log_message(f"编码错误: {do_file}\n{e}\n")
+                except Exception as e:
+                    log_message(f"解压缩时出错: {do_file}\n{e}\n")
+            else:
+                log_message(f"非压缩文件，跳过: {do_file}\n")
+            queued_files.task_done()
+
+    # 使用 ThreadPoolExecutor 控制并发
+    max_workers = 5  # 根据需要调整线程数量
+    thread_lock = threading.Lock()  # 添加锁
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(process_file) for _ in range(max_workers)]
+        for future in as_completed(futures):
+            try:
+                future.result()  # 捕获线程中的异常
+            except Exception as e:
+                log_message(f"线程执行时发生异常: {e}\n")
+
+    print('线程池关闭')
+
+
 def extract_with_7zip(archive_path, extract_path, password=None):
     command = build_command(archive_path, extract_path, password)
     try:
@@ -83,89 +189,6 @@ def extract_with_7zip(archive_path, extract_path, password=None):
         return False
 
 
-def remove_compress(extracted_files, log_text_widget=None):
-    for file_path in extracted_files:
-        try:
-            os.remove(file_path)
-            if log_text_widget:
-                log_message(f"已删除文件: {file_path}\n")
-        except OSError as e:
-            if log_text_widget:
-                log_message(f"删除文件时发生异常: {e}\n")
-
-
-def extract_all(input_path, output_path, password=None):
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-
-    extracted_files = set()
-    queued_files = queue.Queue()
-
-    # 初始添加输入路径到队列
-    if os.path.isfile(input_path):
-        queued_files.put(input_path)
-    else:
-        # 遍历输入路径，添加所有文件到队列
-        for root, _, files in os.walk(input_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                queued_files.put(file_path)
-
-    def process_file():
-        while True:
-            try:
-                do_file = queued_files.get(timeout=1)
-            except queue.Empty:
-                break
-
-            with lock:
-                if do_file in extracted_files:
-                    log_message(f"文件已处理过，跳过: {do_file}\n")
-                    continue
-                extracted_files.add(do_file)
-
-            if is_compressed_file(do_file):
-                try:
-                    result = extract_with_7zip(do_file, output_path, password)
-                    if isinstance(result, list):
-                        log_message(f"已解压文件: {do_file}\n")
-                        # 将新解压出的文件添加到队列
-                        for file_path in result:
-                            if is_compressed_file(file_path):
-                                queued_files.put(file_path)
-                    else:
-                        log_message(f"解压失败: {do_file}\n")
-                except UnicodeDecodeError as e:
-                    log_message(f"编码错误: {do_file}\n{e}\n")
-                except Exception as e:
-                    log_message(f"解压缩时出错: {do_file}\n{e}\n")
-            else:
-                log_message(f"非压缩文件，跳过: {do_file}\n")
-
-            queued_files.task_done()
-
-    # 使用线程池控制并发
-    max_workers = 5  # 根据需要调整线程数量
-    threads = []
-    lock = threading.Lock()  # 添加锁
-    for _ in range(max_workers):
-        t = threading.Thread(target=process_file)
-        t.start()
-        threads.append(t)
-
-    # 等待所有队列中的任务完成
-    queued_files.join()
-
-    # 等待所有线程结束
-    for t in threads:
-        t.join()
-    user_choice = messagebox.askquestion("提示", "解压完成，是否删除压缩文件？")
-    if user_choice == 'yes':
-        remove_compress(extracted_files)
-    else:
-        pass
-
-
 def is_compressed_file(file_path):
     if not os.path.isfile(file_path):
         return False
@@ -192,21 +215,6 @@ def select_clear_directory():
     clear_dir_var.set(path)
 
 
-# 开始解压
-def start_extraction():
-    input_path = input_dir_var.get()
-    output_path = output_dir_var.get()
-    password = password_var.get()
-
-    if not input_path or not output_path:
-        messagebox.showwarning("警告", "请填写所有必要的字段。")
-        return
-    # 启动日志更新
-    update_log(log_text)
-    extraction_thread = threading.Thread(target=extract_all, args=(input_path, output_path, password))
-    extraction_thread.start()
-
-
 # 加载密码
 def load_passwords():
     if os.path.exists(PASSWORD_FILE):
@@ -229,9 +237,10 @@ def save_new_password(password):
 
 
 def delete_promotion_files():
+    update_log(log_text)
     files_to_delete = delete_input.get("1.0", "end-1c")  # 获取文本框内容
     # 获取用户选择的目录
-    target_directory = output_dir_var.get()
+    target_directory = clear_dir_var.get()
 
     if not os.path.isdir(target_directory):
         messagebox.showerror("错误", "指定的目录无效")
@@ -281,19 +290,21 @@ def on_drop_4(event):
 
 # 创建主窗口
 root = TkinterDnD.Tk()
-root.title("套娃解压工具 v0.3.0")
+root.title("套娃解压工具 v0.3.1")
 
 # 配置窗口的列和行，使其可以随着窗口大小的变化而变化
 root.columnconfigure(0, weight=1)
 root.columnconfigure(1, weight=3)
 root.columnconfigure(2, weight=1)
-root.columnconfigure(3, weight=1)
+# root.columnconfigure(3, weight=1)
 root.rowconfigure(1, weight=1)
 root.rowconfigure(2, weight=1)
 root.rowconfigure(3, weight=1)
 root.rowconfigure(4, weight=1)
 root.rowconfigure(5, weight=1)
 root.rowconfigure(6, weight=1)
+root.rowconfigure(7, weight=1)
+root.rowconfigure(8, weight=1)
 
 # 输入目录
 input_label = tk.Label(root, text="输入目录:")
@@ -334,36 +345,45 @@ password_combobox.grid(row=2, column=1, padx=10, pady=10, sticky="we")
 save_password_button = tk.Button(root, text="保存密码", command=lambda: save_new_password(password_var.get()))
 save_password_button.grid(row=2, column=2, padx=10, pady=10, sticky="we")
 
+# 创建复选框
+remove_check = tk.Button(root, text="删除压缩文件", command=lambda: remove_compress(input_dir_var.get()))
+remove_check.grid(row=3, column=2, padx=10, pady=10, sticky="we")
 # 开始按钮
 start_extraction_button = tk.Button(root, text="开始解压", command=start_extraction)
-start_extraction_button.grid(row=3, columnspan=3, padx=10, pady=10, sticky="we")
+start_extraction_button.grid(row=3, column=1, padx=10, pady=10, sticky="we")
+
+sep = Separator(root, orient=HORIZONTAL)
+sep.grid(row=4, column=0, columnspan=3, padx=10, pady=10, sticky="we")
 
 # 清理目录
 clear_label = tk.Label(root, text="清理目录:")
-clear_label.grid(row=4, column=0, padx=10, pady=10, sticky="we")
+clear_label.grid(row=5, column=0, padx=10, pady=10, sticky="we")
 
 clear_dir_var = tk.StringVar()
 clear_entry = tk.Entry(root, textvariable=clear_dir_var)
-clear_entry.grid(row=4, column=1, padx=10, pady=10, sticky="we")
+clear_entry.grid(row=5, column=1, padx=10, pady=10, sticky="we")
 
 clear_select_button = tk.Button(root, text="选择", command=select_clear_directory)
-clear_select_button.grid(row=4, column=2, padx=10, pady=10, sticky="we")
+clear_select_button.grid(row=5, column=2, padx=10, pady=10, sticky="we")
 clear_entry.drop_target_register(DND_FILES)
 clear_entry.dnd_bind('<<Drop>>', on_drop_4)
 
 # 删除推广文件
 delete_label = tk.Label(root, text="删除推广文件:")
-delete_label.grid(row=5, column=0, padx=10, pady=10, sticky="we")
+delete_label.grid(row=6, column=0, padx=10, pady=10, sticky="we")
 
-delete_input = tk.Text(root, height=5)  # 修正高度参数名
-delete_input.grid(row=5, column=1, padx=10, pady=10, sticky="we")
+delete_input = tk.Text(root, height=5)
+delete_input.grid(row=6, column=1, padx=10, pady=10, sticky="we")
 delete_input.drop_target_register(DND_FILES)
 delete_input.dnd_bind('<<Drop>>', on_drop_3)
 
 delete_button = tk.Button(root, text="删除", command=delete_promotion_files)
-delete_button.grid(row=5, column=2, padx=10, pady=10, sticky="we")
+delete_button.grid(row=6, column=2, padx=10, pady=10, sticky="we")
 
-log_text = tk.Text(root, wrap='word')
-log_text.grid(row=6, columnspan=3, padx=10, pady=10, sticky="we")
+delete_label = tk.Label(root, text="运行日志")
+delete_label.grid(row=7, column=1, padx=10, pady=10, sticky="we")
+
+log_text = tk.Text(root, wrap='word', height=8)
+log_text.grid(row=8, columnspan=3, padx=10, sticky="we")
 
 root.mainloop()
