@@ -1,4 +1,7 @@
 # Condom-decompression
 套娃解压小脚本
 可以一步到位解压经过多次压缩的压缩包，调用7zip进行解压操作。
-![image](https://github.com/user-attachments/assets/745a5479-14fb-4780-9565-421b792d567c)
+
+![image](https://github.com/user-attachments/assets/7668fce3-e592-40e7-93d8-4dd4a59feff5)
+可直接拖动文件夹到输入目录中，软件会自动解压输入目录下的所有压缩包，不管是几层压缩。
+增加了删除推广文件功能，拖入需要清理的文件夹，然后再拖入需要清除的推广文件，软件会自动将需要清理的文件夹下所有目录中的相同文件清除。
